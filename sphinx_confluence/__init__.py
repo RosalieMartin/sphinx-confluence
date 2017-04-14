@@ -66,6 +66,25 @@ class HTMLConfluenceTranslator(HTMLTranslator):
     def unknown_visit(self, node):
         self.builder.warn('Unknown visit is not implemented for node: {}'.format(node))
 
+    def add_permalink_ref(self, node, title):
+        """
+        Modify permalink so that it includes the id of the reference, and generate a HTML macro that won't be modified by Confluence
+        <ac:structured-macro ac:name="html" ac:schema-version="1" ac:macro-id="6cdb1ae8-5c8b-44ed-8253-130fe91d50e2">
+          <ac:plain-text-body><![CDATA[<a href='TheLink'>TheLinkTitle</a>]]>
+          </ac:plain-text-body>
+        </ac:structured-macro>
+        """
+        macro = """\
+            <ac:structured-macro ac:name="html" ac:schema-version="1" ac:macro-id="6cdb1ae8-5c8b-44ed-8253-130fe91d50e2">
+              <ac:plain-text-body><![CDATA[%s]]>
+              </ac:plain-text-body>
+            </ac:structured-macro>
+        """
+        if node['ids'] and self.permalink_text and self.builder.add_permalinks:
+            format = u'<a class="headerlink" id="%s" href="#%s" title="%s">%s</a>'
+            link = format % (node['ids'][0], node['ids'][0], title, self.permalink_text)
+            self.body.append(macro % link)
+
     def visit_admonition(self, node, name=''):
         """
         Info, Tip, Note, and Warning Macros
@@ -170,7 +189,7 @@ class HTMLConfluenceTranslator(HTMLTranslator):
         uri = node['uri']
         filename = os.path.basename(uri)
         atts['alt'] = node.get('alt', uri)
-        atts['thumbnail'] = 'true'
+        #atts['thumbnail'] = 'true'		=> we don't want thumbnail but real images
 
         if 'width' in node:
             atts['width'] = node['width']
@@ -186,7 +205,7 @@ class HTMLConfluenceTranslator(HTMLTranslator):
         else:
             suffix = '\n'
 
-        self.context.append('')
+        #self.context.append('')	=> this is causing the context not correct and makes the generation process failing
         self.body.append(self.imgtag(filename, suffix, **atts))
 
     def visit_title(self, node):
@@ -322,23 +341,23 @@ class HTMLConfluenceTranslator(HTMLTranslator):
         else:
             atts['class'] += ' external'
         if 'refuri' in node:
-            atts['href'] = ''
-            # Confluence makes internal links with prefix from page title
-            if node.get('internal') and TitlesCache.has_title(self.document):
-                atts['href'] += '#%s-' % TitlesCache.get_title(self.document).replace(' ', '')
+            # Keep only the page title and remove the hierarchy and the .html, and add the anchor at the end
+            posHash = node['refuri'].find('#')
+            if posHash > 0:
+                refuri = node['refuri'][0:posHash].replace('.html', '')
+                poslastslash = refuri.rfind('/')
+                atts['href'] = refuri[(poslastslash+1 if poslastslash > 0 else 0):]+node['refuri'][posHash:]
+            else:
+                atts['href'] = node['refuri']
 
-            atts['href'] += node['refuri']
             if self.settings.cloak_email_addresses and atts['href'].startswith('mailto:'):
                 atts['href'] = self.cloak_mailto(atts['href'])
                 self.in_mailto = 1
         else:
             assert 'refid' in node, 'References must have "refuri" or "refid" attribute.'
 
-            atts['href'] = ''
-            # Confluence makes internal links with prefix from page title
-            if node.get('internal') and TitlesCache.has_title(self.document):
-                atts['href'] += '#%s-' % TitlesCache.get_title(self.document).replace(' ', '')
-            atts['href'] += node['refid']
+            # Create the anchor to this refid
+            atts['href'] = '#'+node['refid']
 
         if not isinstance(node.parent, nodes.TextElement):
             assert len(node) == 1 and isinstance(node[0], nodes.image)
@@ -351,18 +370,19 @@ class HTMLConfluenceTranslator(HTMLTranslator):
         if node.get('secnumber'):
             self.body.append(('%s' + self.secnumber_suffix) % '.'.join(map(str, node['secnumber'])))
 
+
     def visit_desc(self, node):
-        """ Replace <dl> """
-        self.body.append(self.starttag(node, 'div', style="margin-top: 10px"))
+        """ Replace <dl> and identify the type of description being processed """
+        self.body.append(self.starttag(node, 'div', CLASS='section-'+node['objtype'], style="margin-top: 10px"))
 
     def depart_desc(self, node):
         self.body.append('</div>\n\n')
 
     def visit_desc_signature(self, node):
-        """ Replace <dt> """
+        """ Replace <dt> and identify the type of description being processed """
         # the id is set automatically
         self.body.append(self.starttag(
-            node, 'div', style='margin-left: 20px; font-weight: bold;'))
+            node, 'div', CLASS=node.parent['objtype'], style='margin-left: 20px; font-weight: bold;'))
         # anchor for per-desc interactive data
         if node.parent['objtype'] != 'describe' and node['ids'] and node['first']:
             self.body.append('<!--[%s]-->' % node['ids'][0])
@@ -403,7 +423,6 @@ class ImageConf(images.Image):
     def run(self):
         # remove 'align' processing
         # remove 'target' processing
-
         self.options.pop('align', None)
         reference = directives.uri(self.arguments[0])
         self.options['uri'] = reference
@@ -546,13 +565,15 @@ def setup(app):
     :type app: sphinx.application.Sphinx
     """
     app.config.html_theme_path = [get_path()]
-    app.config.html_theme = 'confluence'
+    #app.config.html_theme = 'confluence'	=> let Conf.py decide that
     app.config.html_scaled_image_link = False
     if LooseVersion(sphinx.__version__) >= LooseVersion("1.4"):
+        print("LooseVersion >= 1.4")
         app.set_translator("html", HTMLConfluenceTranslator)
     else:
+        print("LooseVersion < 1.4")
         app.config.html_translator_class = 'sphinx_confluence.HTMLConfluenceTranslator'
-    app.config.html_add_permalinks = ''
+    #app.config.html_add_permalinks = ''	=> We want permalinks
 
     jira_issue = JiraIssueRole('jira_issue', nodes.Inline)
     app.add_role(jira_issue.name, jira_issue)
