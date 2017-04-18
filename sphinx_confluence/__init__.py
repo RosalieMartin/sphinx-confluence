@@ -205,7 +205,7 @@ class HTMLConfluenceTranslator(HTMLTranslator):
         else:
             suffix = '\n'
 
-        #self.context.append('')	=> this is causing the context not correct and makes the generation process failing
+        self.context.append('')
         self.body.append(self.imgtag(filename, suffix, **atts))
 
     def visit_title(self, node):
